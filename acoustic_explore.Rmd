@@ -182,7 +182,7 @@ Creating a file with all anthro/bio data in
 ```{r, eval=FALSE, echo = FALSE, message= FALSE}
 
 
-br4<-read.csv(paste(getwd(), "/Data/Processed_data_b/", sites_f$f_sites[2],"_acoustic_datetime.csv", sep=""), stringsAsFactors = FALSE)
+br4<-read.csv(paste(getwd(), "/Data/Processed_data_c/", as.character(sites_f$f_sites[2]),"_acoustic_datetime_check.csv", sep=""), stringsAsFactors = FALSE)
 
 
 fp<-paste(here::here("Data/Processed_data_b/"))
@@ -198,6 +198,74 @@ alldata <- do.call(rbind,lapply(fps, read.csv))
 
 
 ```
+
+
+```{r}
+all_data<-read.csv(here::here("/Data/Processed_data_b/all_sites.csv"))
+
+all_data$datetime
+
+all_data$time_30min<-lubridate::round_date(as.POSIXct(all_data$datetime, format = "%Y-%m-%d %H:%M:%S"), "30 minutes") 
+                   
+
+all_data_avg <- all_data %>%
+  group_by(site, time_30min)%>%
+  summarize(anthrop_30 = mean(anthrop), biotic_30 = mean(biotic))
+
+all_data_avg$time <- strftime(all_data_avg$time_30min, format="%H:%M:%OS")
+all_data_avg$time <- as.POSIXct(all_data_avg$time, format="%H:%M:%OS")
+
+
+
+all_data_avg%>%
+  filter(site == "SE41SA")%>%
+  ggplot(aes(x = time, y = anthrop_30))+
+  geom_smooth()+
+  geom_smooth(aes(x = time,y = biotic_30, colour = "red"))
+
+                   
+```
+
+```{r}
+
+ad_melt<-melt(all_data_avg, id = c("site", "time", "time_30min") )
+
+
+ad_melt$minutes_after_midnight<-as.numeric(difftime(ad_melt$time, as.POSIXct('00:00:00', format = '%H:%M:%S'), units = 'min'))
+
+ggplot(ad_melt, aes(x = time_30min, y = value, group = interaction(site,variable), colour = site))+
+  geom_smooth( show.legend = FALSE)
+
+
+ggplot(ad_melt, aes(x = minutes_after_midnight, y = value, group = interaction(site,variable), colour = site))+
+  geom_smooth( show.legend = FALSE)
+
+
+
+
+ad_melt$id<-paste(ad_melt$site, ad_melt$variable, sep = "_")
+
+
+na_ad_melt<-ad_melt[complete.cases(ad_melt),]
+
+write.csv(na_ad_melt, "data_for_tsfresh.csv", row.names = FALSE)
+
+
+```
+
+
+
+```{r}
+data("interest.rates")
+
+diffs <- rep(1, ncol(interest.rates))
+logs <- rep(TRUE, ncol(interest.rates))
+dpred <- diss(interest.rates, "PRED", h = 6, B = 1200, logarithms = logs, differences = diffs, plot = TRUE)
+
+hc.dpred <- hclust(dpred$dist)
+plot(hc.dpred)
+```
+
 
 
 ```{r, echo=FALSE, message= FALSE}
