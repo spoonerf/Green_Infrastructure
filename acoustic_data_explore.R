@@ -1,6 +1,6 @@
-f<-list.files(paste(getwd(),"/Data", sep=""), pattern = "*.csv")
+f<-list.files(paste(getwd(),"/csv_results", sep=""), pattern = "*.csv")
 
-test<-read.csv(paste(getwd(), "/Data/", f[2], sep=""))
+test<-read.csv(paste(getwd(), "/csv_results/", f[3], sep=""))
 
 length(seq(
   from=as.POSIXct("2015-07-31 13:00:00"),
