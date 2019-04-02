@@ -1,0 +1,404 @@
+---
+title: "London Acoustic Data"
+author: "Fiona Spooner"
+date: "March 13, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+```{r, message= FALSE, warning = FALSE}
+library(lubridate)
+
+#####adding in appropriate date time vlaues for each of the acoustic datasets
+
+file_name<-list.files(paste(getwd(),"/Data/Raw_data", sep=""), pattern = "*.csv")
+
+f_sites<-gsub("_|.csv", "", file_name)
+
+f_df<-data.frame(file_name, f_sites)
+
+all_sites<-read.csv("surveyTimeAndDate_FSamend.csv")
+
+sites_f<-merge(f_df, all_sites, by.x = "f_sites", by.y = "SiteCode")
+
+sites_f$start_datetime<-as.POSIXct(paste(sites_f$Start_Date, sites_f$Start_Time, sep = " "), format = "%d-%m-%y %H:%M:%OS")
+sites_f$end_datetime<-as.POSIXct(paste(sites_f$End_Date, sites_f$End_Time, sep = " "), format = "%d-%m-%y %H:%M:%OS")
+
+
+
+```
+
+```{r, eval = FALSE, message= FALSE}
+sr<-0.524  #one record every 0.524 seconds
+
+
+site_datetime<-function(site_name){
+  
+  df<-sites_f[sites_f$f_sites == site_name,]
+  
+  acoustic<-read.csv(paste(getwd(), "/Data/Raw_data/", df$file_name, sep=""))
+  
+  time_seq<-seq(
+    from=as.POSIXct(df$start_datetime[1], format = "%Y-%m-%d %H:%M:%OS"),
+    to=as.POSIXct(df$end_datetime[1], format = "%Y-%m-%d %H:%M:%OS"),
+    by= sr
+    #length.out = (7*24*60*60)/sr
+  )  
+  
+  t.lub <- ymd_hms(time_seq)
+  h.lub <- minute(t.lub)
+  
+  down_time<-which(h.lub == 29 |h.lub == 59 )    #removing times that are in the 29th or 59th minute
+  
+  time_seq_sub<-time_seq[-down_time]
+  time_seq_sub<-time_seq_sub[1:nrow(acoustic)]
+  df_sub <- acoustic
+  #df_sub<-acoustic[1:length(time_seq_sub),]
+  df_sub$datetime<-time_seq_sub
+  df_sub$site<-site_name
+  
+  write.csv(df_sub, paste(getwd(), "/Data/Processed_data_c/",site_name, "_acoustic_datetime_check.csv", sep=""), row.names = FALSE)
+  return(df_sub)
+  
+}
+
+sapply(sites_f$f_sites, site_datetime)
+
+##accidentally added row.names to the saved csvs so need to remove these
+
+# fp<-paste(here::here("Data/Processed_data/"))
+# files<-list.files(fp)
+# 
+# fps<-paste(fp, files, sep="/")
+# 
+# source("D:/Fiona/Functions/row_name_remover.R")
+# 
+# sapply(fps, row_name_remover)
+# # 
+# rn_remove<-function(file){
+#   
+#   fin<-read.csv(file)
+#   fino<-fin[,-1]
+#   write.csv(fino, file, row.names = FALSE)
+#   print(file)
+# }
+# 
+# sapply(fps, rn_remove)
+# 
+
+```
+
+
+```{r, eval =FALSE}
+####plotting and checking the data
+
+br4<-read.csv(paste(getwd(), "/Data/Processed_data/", sites_f$f_sites[1],"_acoustic_datetime.csv", sep=""), stringsAsFactors = FALSE)
+
+br4$datetime <- as.POSIXct(br4$datetime)
+
+
+br4$time <- strftime(br4$datetime, format="%H:%M:%OS")
+br4$time <- as.POSIXct(br4$time, format="%H:%M:%OS")
+
+library(ggplot2)
+library(dplyr)
+
+
+testdmean<-br4 %>%
+  group_by(time) %>%
+  summarize(mean_anth = mean(anthrop), mean_bio = mean(biotic))
+
+
+ggplot(testdmean, aes(x = time, y = mean_bio))+
+  geom_point()+
+  geom_smooth()+
+  scale_x_datetime(date_breaks = "2 hour",
+                       date_labels = "%I:%M %p")
+
+
+
+```
+
+
+ Getting sunrise data for each site for the week during which the study was undertaken
+```{r, eval = FALSE, message= FALSE}
+library(suncalc)
+library(dplyr)
+
+lon_lat<-read.csv("allSitesDetailsCoordinates.csv")
+
+xy_id<-lon_lat[, c("SiteCode", "Lat", "Long")]
+
+sites_xy<-merge(sites_f, xy_id, by.x = "f_sites", by.y = "SiteCode")
+
+
+df_out<-NULL
+for (i in 1:nrow(sites_xy)){
+
+  dates_out <- seq.Date(as.Date(sites_xy$Start_Date[i], format = "%d-%m-%y"), as.Date(sites_xy$End_Date[i], format = "%d-%m-%y"), by = "day")
+  site_id<-sites_xy$f_sites[i]
+  lat<-sites_xy$Lat[i]
+  lon<-sites_xy$Long[i]
+  df<-data.frame(site_id, dates_out, lat, lon)
+  colnames(df)<-c("site_id", "date", "lat", "lon")
+  df_out<-rbind(df, df_out)
+  print(i)
+  }
+
+data<-df_out[,2:4]
+
+#data<-data.frame(date = as.Date(sites_xy$Start_Date, format = "%d-%m-%y") ,lat = sites_xy$Lat, lon = sites_xy$Long)
+
+sun_out<-NULL
+
+for (i in 1:nrow(df_out)){
+
+  sun_df<-getSunlightTimes(data = df_out[i,2:4], keep = c("sunrise", "sunriseEnd", "sunsetStart","sunset" ), tz = "GMT")
+  sun_df_out<-data.frame(df_out[i,], sun_df[,4:7])
+  sun_out<-rbind(sun_df_out, sun_out)
+  print(sun_df_out)
+  
+}
+
+
+
+#write.csv(sun_out, here::here("Data/suntimes_alldates_allsites.csv"), row.names = FALSE)
+
+
+sun_summary<-sun_out %>%
+  group_by(site_id) %>%
+  summarise(min_sunrise = min(sunrise), max_sunrise = max(sunriseEnd), min_sunset = min(sunsetStart), max_sunset = max(sunset))
+
+
+#write.csv(sun_summary,here::here("Data/suntimes_summary_allsites.csv"), row.names = FALSE )
+
+```
+
+Creating a file with all anthro/bio data in 
+
+```{r, eval=FALSE, echo = FALSE, message= FALSE}
+
+
+br4<-read.csv(paste(getwd(), "/Data/Processed_data_c/", as.character(sites_f$f_sites[2]),"_acoustic_datetime_check.csv", sep=""), stringsAsFactors = FALSE)
+
+
+fp<-paste(here::here("Data/Processed_data_b/"))
+files<-list.files(fp)
+
+fps<-paste(fp, files, sep="/")
+
+
+alldata <- do.call(rbind,lapply(fps, read.csv))
+
+#write.csv(alldata,here::here("/Data/Processed_data_b/all_sites.csv"), row.names = FALSE)
+
+
+
+```
+
+
+```{r}
+all_data<-read.csv(here::here("/Data/Processed_data_b/all_sites.csv"))
+
+all_data$datetime
+
+all_data$time_30min<-lubridate::round_date(as.POSIXct(all_data$datetime, format = "%Y-%m-%d %H:%M:%S"), "30 minutes") 
+                   
+
+all_data_avg <- all_data %>%
+  group_by(site, time_30min)%>%
+  summarize(anthrop_30 = mean(anthrop), biotic_30 = mean(biotic))
+
+all_data_avg$time <- strftime(all_data_avg$time_30min, format="%H:%M:%OS")
+all_data_avg$time <- as.POSIXct(all_data_avg$time, format="%H:%M:%OS")
+
+
+
+all_data_avg%>%
+  filter(site == "SE41SA")%>%
+  ggplot(aes(x = time, y = anthrop_30))+
+  geom_smooth()+
+  geom_smooth(aes(x = time,y = biotic_30, colour = "red"))
+
+                   
+```
+
+```{r}
+
+ad_melt<-melt(all_data_avg, id = c("site", "time", "time_30min") )
+
+
+ad_melt$minutes_after_midnight<-as.numeric(difftime(ad_melt$time, as.POSIXct('00:00:00', format = '%H:%M:%S'), units = 'min'))
+
+ggplot(ad_melt, aes(x = time_30min, y = value, group = interaction(site,variable), colour = site))+
+  geom_smooth( show.legend = FALSE)
+
+
+ggplot(ad_melt, aes(x = minutes_after_midnight, y = value, group = interaction(site,variable), colour = site))+
+  geom_smooth( show.legend = FALSE)
+
+
+
+
+ad_melt$id<-paste(ad_melt$site, ad_melt$variable, sep = "_")
+
+
+na_ad_melt<-ad_melt[complete.cases(ad_melt),]
+
+write.csv(na_ad_melt, "data_for_tsfresh.csv", row.names = FALSE)
+
+
+```
+
+
+
+```{r}
+data("interest.rates")
+
+diffs <- rep(1, ncol(interest.rates))
+logs <- rep(TRUE, ncol(interest.rates))
+dpred <- diss(interest.rates, "PRED", h = 6, B = 1200, logarithms = logs, differences = diffs, plot = TRUE)
+
+hc.dpred <- hclust(dpred$dist)
+plot(hc.dpred)
+```
+
+
+
+```{r, echo=FALSE, message= FALSE}
+coord_radar <- function (theta = "x", start = 0, direction = 1) 
+{
+    theta <- match.arg(theta, c("x", "y"))
+    r <- if (theta == "x") 
+        "y"
+    else "x"
+    ggproto("CordRadar", CoordPolar, theta = theta, r = r, start = start, 
+        direction = sign(direction),
+        is_linear = function(coord) TRUE)
+}
+
+```
+
+
+```{r, message= FALSE}
+library(ggplot2)
+library(dplyr)
+
+files<-list.files(here::here("/Data/Processed_data_c/"))
+
+plot_function<-function(file){
+  
+    sun_summary<-read.csv(here::here("Data/suntimes_summary_allsites.csv"))
+    df_all<-read.csv(paste(here::here("/Data/Processed_data_b/",file, sep = "")))
+    
+    df_all_sub<-df_all[complete.cases(df_all),]
+    
+    
+    sun_df<-merge(df_all_sub, sun_summary, by.x = "site", by.y = "site_id")
+    
+    sun_df$time <- strftime(sun_df$datetime, format="%H:%M:%OS")
+    sun_df$time <- as.POSIXct(sun_df$time, format="%H:%M:%OS")
+    
+    sun_df$min_sunrise <- strftime(sun_df$min_sunrise[1], format="%H:%M:%S")
+    sun_df$min_sunrise <- as.POSIXct(sun_df$min_sunrise[1], format="%H:%M:%S")
+    
+    sun_df$max_sunrise <- strftime(sun_df$max_sunrise[1], format="%H:%M:%S")
+    sun_df$max_sunrise <- as.POSIXct(sun_df$max_sunrise[1], format="%H:%M:%S")
+    
+    sun_df$min_sunset <- strftime(sun_df$min_sunset[1], format="%H:%M:%S")
+    sun_df$min_sunset <- as.POSIXct(sun_df$min_sunset[1], format="%H:%M:%S")
+    
+    sun_df$max_sunset <- strftime(sun_df$max_sunset[1], format="%H:%M:%S")
+    sun_df$max_sunset <- as.POSIXct(sun_df$max_sunset[1], format="%H:%M:%S")
+    
+    testdmean<-sun_df %>%
+      group_by(time) %>%
+      mutate(mean_anth = mean(anthrop), mean_bio = mean(biotic)) %>%
+      select(site, time, min_sunrise, max_sunrise, min_sunset, max_sunset, mean_anth, mean_bio)%>%
+      distinct()%>%
+      ungroup()
+    
+    
+    library(reshape2)
+    test_melt<-melt(testdmean, id = c("site","min_sunrise", "max_sunrise", "min_sunset", "max_sunset", "time"))
+    
+    levels(test_melt$variable) <- c("Anthropogenic", "Biotic")
+  
+  #jpeg(paste(file, '_lin_plot.jpg', sep= ""))
+  
+  
+  
+  lin_map<-ggplot(data = test_melt, aes(x = as.POSIXct(time, format ="%H:%M:%OS", tz = "UTC"), y = value, group = variable))+
+      geom_point(alpha = 0.2)+
+      geom_smooth()+
+      geom_vline(aes(colour ="red", size= 1, alpha = 0.4,xintercept = as.numeric(c(min_sunrise))))+
+      geom_vline(aes(colour ="red", size = 1, alpha = 0.4,xintercept = as.numeric(c(min_sunset))))+
+      facet_wrap(~variable)+
+      scale_x_datetime(date_breaks = "2 hour",date_labels = "%I %p")+
+      theme(legend.position="none")+
+      #axis.text.x = element_text(angle=90, hjust=1)+
+      xlab("Time")
+  
+  plot(lin_map)
+  dev.copy(png, paste(file, '_lin_plot.png'))
+  dev.off()
+  
+ # jpeg(paste(file, '_circ_plot.jpg', sep= ""))
+    
+  circ_map<-ggplot(data = test_melt, aes(x = as.POSIXct(time, format ="%H:%M:%OS", tz = "UTC"), y = value, group = variable)) +
+      #geom_point(aes(group = variable, color = variable),alpha = 0.2)+
+      geom_smooth(aes(group = variable, color = variable), size = 1)+
+      scale_x_datetime(date_breaks = "1 hour",date_labels = "%I %p")+
+      xlab("")+
+      coord_radar()
+   
+  plot(circ_map)
+  dev.copy(png, paste(file, '_circ_plot.png'))
+  dev.off()
+  
+}
+
+lapply(files, plot_function )
+
+```
+
+
+NEED TO CREATE FEATURE VECTOR FOR EACH DAY
+
+EXTRACT FEATURES SUCH AS NUMBER OF PEAKS PER DAY, TIME OF PEAKS, STEEPEST SLOPS
+HEIGHT/INTERCEPT, AREA UNDER CURVE?
+
+
+
+```{r, message= FALSE, eval = FALSE}
+
+library(ggradar)
+library(ggplot2)
+
+ggplot(data = test_melt, aes(x = as.POSIXct(time, format ="%H:%M:%OS", tz = "UTC"), y = value, group = variable)) +
+  #geom_point(aes(group = variable, color = variable),alpha = 0.2)+
+  geom_smooth(aes(group = variable, color = variable), size = 1)+
+  scale_x_datetime(date_breaks = "1 hour",date_labels = "%I %p")+
+  xlab("")+
+  coord_radar()
+
+
+```
+
+
+```{r, eval = FALSE, echo = FALSE, message= FALSE}
+
+BR4<-sun_df[sun_df$site == "BR4",]
+
+
+ggplot(BR4, aes(x = time, y = mean_bio))+
+  geom_point()+
+  geom_smooth()+
+  scale_x_datetime(date_breaks = "2 hour",
+                       date_labels = "%I:%M %p")
+
+
+```
