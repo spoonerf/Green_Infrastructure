@@ -91,14 +91,3 @@ data<-data.frame(date = as.Date(sites_xy$Start_Date, format = "%d-%m-%y"), lat =
 getSunlightTimes(data = data, keep = c("sunrise", "sunriseEnd", "sunset", "sunsetStart"), tz = "GMT")
 
 
-
-
-
-
-
-
-
-
-
-
-
