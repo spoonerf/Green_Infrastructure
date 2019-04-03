@@ -1,0 +1,124 @@
+---
+title: "feature extraction"
+author: "Fiona Spooner"
+date: "April 3, 2019"
+output: html_document
+---
+
+```{r, eval = FALSE}
+library(here)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(DescTools)
+library(knitr)
+library(dplyr)
+
+```
+
+```{r, eval = FALSE}
+files<-list.files(here::here("/Data/Processed_data_c/"))
+
+suntimes<-read.csv(here::here("Data/suntimes_summary_allsites.csv"), stringsAsFactors = FALSE)
+
+sr_min <- as.POSIXct(strftime(suntimes$min_sunrise, format="%H:%M:%S"), format="%H:%M:%S", tz = "GMT")
+sr_max <- as.POSIXct(strftime(suntimes$max_sunrise, format="%H:%M:%S"), format="%H:%M:%S", tz = "GMT")
+
+ss_min<- as.POSIXct(strftime(suntimes$min_sunset, format="%H:%M:%S"), format="%H:%M:%S", tz = "GMT")
+ss_max<-as.POSIXct(strftime(suntimes$max_sunset, format="%H:%M:%S"), format="%H:%M:%S", tz = "GMT")
+
+
+for (i in 1:length(sr_min)){
+  suntimes$mean_sunrise[i]<-mean(c(sr_min[i], sr_max[i]))
+  suntimes$mean_sunset[i]<-mean(c(ss_min[i], ss_max[i]))
+  suntimes$mean_sunrise<-as_datetime(suntimes$mean_sunrise)
+  suntimes$mean_sunset<-as_datetime(suntimes$mean_sunset)
+  }
+
+feature_extract<-function(file){
+
+    all_data<-read.csv(paste(here::here("/Data/Processed_data_c/", file), sep=""))
+    
+    
+    
+    all_data$time_30min<-lubridate::round_date(as.POSIXct(all_data$datetime, format = "%Y-%m-%d %H:%M:%S"), "30 minutes") 
+                     
+    all_data_avg <- all_data %>%
+    group_by(site, time_30min)%>%
+    summarize(anthrop_30 = mean(anthrop), biotic_30 = mean(biotic))
+    
+    all_data_avg$time <- strftime(all_data_avg$time_30min, format="%H:%M:%OS")
+    all_data_avg$time <- as.POSIXct(all_data_avg$time, format="%H:%M:%OS")
+    
+    all_data_avg$day<-format(as.Date(all_data_avg$time_30min ,format="%Y-%m-%d"), "%d")
+    
+    
+    all_data_avg$minutes_after_midnight<-as.numeric(difftime(all_data_avg$time, as.POSIXct('00:00:00', format = '%H:%M:%S'), units = 'min'))
+    
+    all_data_avg<-all_data_avg[complete.cases(all_data_avg),]
+    
+    data_summary<-all_data_avg %>%
+    group_by(site,day) %>%
+    mutate(which_diff_anthro = which.max(diff(anthrop_30)), steepest_anth = max(diff(anthrop_30)), which_diff_bio = which.max(diff(biotic_30)), steepest_bio = max(diff(biotic_30)),steepest_time_anth = time_30min[unique(which_diff_anthro)],steepest_time_bio = time_30min[unique(which_diff_bio)], auc_anthro = AUC(minutes_after_midnight, anthrop_30, method = "spline"),auc_bio = AUC(minutes_after_midnight, biotic_30, method = "spline"), n_peaks_anth = ifelse( is.null(nrow(findpeaks(anthrop_30, threshold = 0.5))), NA,  nrow(findpeaks(anthrop_30, threshold = 0.5))),n_peaks_bio = ifelse( is.null(nrow(findpeaks(biotic_30, threshold = 0.5))), NA,  nrow(findpeaks(biotic_30, threshold = 0.5))))  %>%
+    select(site, day, steepest_anth, steepest_bio,steepest_time_anth,steepest_time_bio ,auc_anthro, auc_bio, n_peaks_anth, n_peaks_bio)%>%
+    distinct()
+    
+    print(file)
+    return(data_summary)
+}
+
+
+fe_out<-lapply(files, feature_extract)
+
+
+df<-bind_rows(fe_out, .id = "column_label")
+
+write.csv(df, "example_feature_extraction.csv", row.names = FALSE)
+
+
+
+```
+
+```{r, echo = FALSE}
+
+
+df<-read.csv("example_feature_extraction.csv")
+
+knitr::kable(df)
+
+```
+
+
+```{r, echo = FALSE, eval = FALSE}
+ad_melt<-melt(all_data_avg[,c("site", "anthrop_30", "biotic_30","day","minutes_after_midnight")], id = c("site", "day", "minutes_after_midnight"))
+
+
+ggplot(ad_melt, aes(x = minutes_after_midnight, y = value, group = interaction(site,variable), colour = variable))+
+  geom_point( show.legend = FALSE)
+
+
+```
+
+
+
+```{r, eval = FALSE, echo = FALSE}
+
+ggplot(ad_melt, aes(x = time_30min, y = value, group = interaction(site,variable), colour = site))+
+  geom_smooth( show.legend = FALSE)
+
+
+ggplot(ad_melt, aes(x = minutes_after_midnight, y = value, group = interaction(site,variable), colour = site))+
+  geom_smooth( show.legend = FALSE)
+
+
+
+
+ad_melt$id<-paste(ad_melt$site, ad_melt$variable, sep = "_")
+
+
+na_ad_melt<-ad_melt[complete.cases(ad_melt),]
+
+write.csv(na_ad_melt, "data_for_tsfresh.csv", row.names = FALSE)
+
+
+```

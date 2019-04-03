@@ -263,6 +263,7 @@ logs <- rep(TRUE, ncol(interest.rates))
 dpred <- diss(interest.rates, "PRED", h = 6, B = 1200, logarithms = logs, differences = diffs, plot = TRUE)
 
 hc.dpred <- hclust(dpred$dist)
+#test
 plot(hc.dpred)
 ```
 
