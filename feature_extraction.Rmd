@@ -13,8 +13,72 @@ library(ggplot2)
 library(DescTools)
 library(knitr)
 library(dplyr)
+library(lubridate)
+library(pracma)
 
 ```
+```{r, message= FALSE, warning = FALSE}
+#####adding in appropriate date time vlaues for each of the acoustic datasets
+
+file_name<-list.files(paste(getwd(),"/Data/Raw_data", sep=""), pattern = "*.csv")
+
+f_sites<-gsub("_|.csv", "", file_name)
+
+f_df<-data.frame(file_name, f_sites)
+
+all_sites<-read.csv("surveyTimeAndDate_FSamend.csv")
+
+sites_f<-merge(f_df, all_sites, by.x = "f_sites", by.y = "SiteCode")
+
+sites_f$start_datetime<-as.POSIXct(paste(sites_f$Start_Date, sites_f$Start_Time, sep = " "), format = "%d-%m-%y %H:%M:%OS")
+sites_f$end_datetime<-as.POSIXct(paste(sites_f$End_Date, sites_f$End_Time, sep = " "), format = "%d-%m-%y %H:%M:%OS")
+
+
+
+```
+
+```{r, eval = FALSE, message= FALSE}
+sr<-0.524  #one record every 0.524 seconds
+
+
+site_datetime<-function(site_name){
+  
+  df<-sites_f[sites_f$f_sites == site_name,]
+  
+  acoustic<-read.csv(paste(getwd(), "/Data/Raw_data/", df$file_name, sep=""))
+  
+  time_seq<-seq(
+    from=as.POSIXct(df$start_datetime[1], format = "%Y-%m-%d %H:%M:%OS"),
+    to=as.POSIXct(df$end_datetime[1], format = "%Y-%m-%d %H:%M:%OS"),
+    by= sr
+    #length.out = (7*24*60*60)/sr
+  )  
+  
+  t.lub <- ymd_hms(time_seq)
+  h.lub <- minute(t.lub)
+  
+  down_time<-which(h.lub == 29 |h.lub == 59 )    #removing times that are in the 29th or 59th minute
+  
+  time_seq_sub<-time_seq[-down_time]
+  time_seq_sub<-time_seq_sub[1:nrow(acoustic)]
+  df_sub <- acoustic
+  #df_sub<-acoustic[1:length(time_seq_sub),]
+  df_sub$datetime<-time_seq_sub
+  df_sub$site<-site_name
+  
+  df_sub<-df_sub[complete.cases(df_sub),]
+  
+  write.csv(df_sub, paste(getwd(), "/Data/Processed_data_c/",site_name, "_acoustic_datetime_check.csv", sep=""), row.names = FALSE)
+  return(df_sub)
+  
+}
+
+sapply(sites_f$f_sites, site_datetime)
+
+ 
+
+```
+
 
 ```{r, eval = FALSE}
 files<-list.files(here::here("/Data/Processed_data_c/"))
@@ -35,11 +99,28 @@ for (i in 1:length(sr_min)){
   suntimes$mean_sunset<-as_datetime(suntimes$mean_sunset)
   }
 
+
+suntimes$mean_sunrise <- strftime(suntimes$mean_sunrise, format="%H:%M:%OS")
+suntimes$mean_sunrise <- as.POSIXct(suntimes$mean_sunrise, format="%H:%M:%OS")
+
+
+suntimes$mean_sunset <- strftime(suntimes$mean_sunset, format="%H:%M:%OS")
+suntimes$mean_sunset <- as.POSIXct(suntimes$mean_sunset, format="%H:%M:%OS")
+
+
+suntimes$sr_mins_after_midnight<-as.numeric(difftime(suntimes$mean_sunrise, as.POSIXct('00:00:00', format = '%H:%M:%S'), units = 'min'))
+suntimes$sr_mins_after_midnight<-suntimes$sr_mins_after_midnight
+
+suntimes$ss_mins_after_midnight<-as.numeric(difftime(suntimes$mean_sunset, as.POSIXct('00:00:00', format = '%H:%M:%S'), units = 'min'))
+suntimes$ss_mins_after_midnight<-suntimes$ss_mins_after_midnight
+
+```
+
+
+```{r}
 feature_extract<-function(file){
 
     all_data<-read.csv(paste(here::here("/Data/Processed_data_c/", file), sep=""))
-    
-    
     
     all_data$time_30min<-lubridate::round_date(as.POSIXct(all_data$datetime, format = "%Y-%m-%d %H:%M:%S"), "30 minutes") 
                      
@@ -59,8 +140,8 @@ feature_extract<-function(file){
     
     data_summary<-all_data_avg %>%
     group_by(site,day) %>%
-    mutate(which_diff_anthro = which.max(diff(anthrop_30)), steepest_anth = max(diff(anthrop_30)), which_diff_bio = which.max(diff(biotic_30)), steepest_bio = max(diff(biotic_30)),steepest_time_anth = time_30min[unique(which_diff_anthro)],steepest_time_bio = time_30min[unique(which_diff_bio)], auc_anthro = AUC(minutes_after_midnight, anthrop_30, method = "spline"),auc_bio = AUC(minutes_after_midnight, biotic_30, method = "spline"), n_peaks_anth = ifelse( is.null(nrow(findpeaks(anthrop_30, threshold = 0.5))), NA,  nrow(findpeaks(anthrop_30, threshold = 0.5))),n_peaks_bio = ifelse( is.null(nrow(findpeaks(biotic_30, threshold = 0.5))), NA,  nrow(findpeaks(biotic_30, threshold = 0.5))))  %>%
-    select(site, day, steepest_anth, steepest_bio,steepest_time_anth,steepest_time_bio ,auc_anthro, auc_bio, n_peaks_anth, n_peaks_bio)%>%
+    mutate(which_diff_anthro = which.max(diff(anthrop_30)), steepest_anth = max(diff(anthrop_30)), which_diff_bio = which.max(diff(biotic_30)), steepest_bio = max(diff(biotic_30)),steepest_time_anth = time_30min[unique(which_diff_anthro)],steepest_time_bio = time_30min[unique(which_diff_bio)], auc_anthro = AUC(minutes_after_midnight, anthrop_30, method = "spline"),auc_bio = AUC(minutes_after_midnight, biotic_30, method = "spline"), n_peaks_anth = ifelse( is.null(nrow(findpeaks(anthrop_30, threshold = 0.5))), NA,  nrow(findpeaks(anthrop_30, threshold = 0.5))),n_peaks_bio = ifelse( is.null(nrow(findpeaks(biotic_30, threshold = 0.5))), NA,  nrow(findpeaks(biotic_30, threshold = 0.5))), auc_an_min_bio = auc_anthro - auc_bio, peak_anth = max(anthrop_30), peak_bio = max(biotic_30), peak_anth_time = time_30min[which(anthrop_30 == peak_anth)],peak_bio_time = time_30min[which(biotic_30 == peak_bio)] )  %>%
+    select(site, day, steepest_anth, steepest_bio,steepest_time_anth,steepest_time_bio ,auc_anthro, auc_bio, n_peaks_anth, n_peaks_bio, auc_an_min_bio, peak_anth, peak_bio, peak_anth_time, peak_bio_time)%>%
     distinct()
     
     print(file)
@@ -79,12 +160,159 @@ write.csv(df, "example_feature_extraction.csv", row.names = FALSE)
 
 ```
 
+
+##Dawn/Dusk specific feature extraction
+##Need to make slope an absolute value - currently only pilling out steepest positive slopes i.e. slopes of rapidly increasing volume
+
+
+```{r}
+
+library(forcats)
+
+dawn_feature_extract<-function(file){
+
+    all_data<-read.csv(paste(here::here("/Data/Processed_data_c/", file), sep=""))
+    
+    suntimes_sub<-suntimes[suntimes$site_id %in% all_data$site,]
+    
+    all_data$time_30min<-lubridate::round_date(as.POSIXct(all_data$datetime, format = "%Y-%m-%d %H:%M:%S"), "30 minutes") 
+                     
+    all_data_avg <- all_data %>%
+    group_by(site, time_30min)%>%
+    summarize(anthrop_30 = mean(anthrop), biotic_30 = mean(biotic))
+
+    all_data_avg$time <- strftime(all_data_avg$time_30min, format="%H:%M:%OS")
+    all_data_avg$time <- as.POSIXct(all_data_avg$time, format="%H:%M:%OS")
+    all_data_avg$day<-format(as.Date(all_data_avg$time_30min ,format="%Y-%m-%d"), "%d")
+    all_data_avg$minutes_after_midnight<-as.numeric(difftime(all_data_avg$time, as.POSIXct('00:00:00', format = '%H:%M:%S'), units = 'min'))
+    all_data_avg<-all_data_avg[complete.cases(all_data_avg),]
+    
+    all_data_avg$site<-fct_explicit_na(all_data_avg$site, na_level = "(Missing)")
+    
+    all_data_avg<-all_data_avg[complete.cases(all_data_avg),]
+    
+    sr_data<-all_data_avg[all_data_avg$minutes_after_midnight >= (suntimes_sub$sr_mins_after_midnight - 60) & all_data_avg$minutes_after_midnight <= (suntimes_sub$sr_mins_after_midnight + 60),]
+    
+    dawn_summary<-sr_data %>%
+    group_by(site,day) %>%
+    mutate(steepest_dawn_anth = max(diff(anthrop_30)), steepest_dawn_bio = max(diff(biotic_30)), auc_dawn_anthro = AUC(minutes_after_midnight, anthrop_30, method = "spline"),auc_dawn_bio = AUC(minutes_after_midnight, biotic_30, method = "spline"), dawn_auc_an_min_bio = auc_dawn_anthro - auc_dawn_bio, peak_dawn_anth = max(anthrop_30), peak_dawn_bio = max(biotic_30) )  %>%
+    select(site, day, steepest_dawn_anth, steepest_dawn_bio, auc_dawn_anthro, auc_dawn_bio, dawn_auc_an_min_bio, peak_dawn_anth, peak_dawn_bio)%>%
+    distinct()
+    
+    print(file)
+    return(dawn_summary)
+}
+
+dawn_out<-lapply(files, dawn_feature_extract)
+
+
+dawn_df<-bind_rows(dawn_out, .id = "column_label")
+
+
+write.csv(df, "dawn_example_feature_extraction.csv", row.names = FALSE)
+
+```
+
+
+```{r}
+dusk_feature_extract<-function(file){
+
+    all_data<-read.csv(paste(here::here("/Data/Processed_data_c/", file), sep=""))
+    
+    suntimes_sub<-suntimes[suntimes$site_id %in% all_data$site,]
+    
+    all_data$time_30min<-lubridate::round_date(as.POSIXct(all_data$datetime, format = "%Y-%m-%d %H:%M:%S"), "30 minutes") 
+                     
+    all_data_avg <- all_data %>%
+    group_by(site, time_30min)%>%
+    summarize(anthrop_30 = mean(anthrop), biotic_30 = mean(biotic))
+
+    all_data_avg$time <- strftime(all_data_avg$time_30min, format="%H:%M:%OS")
+    all_data_avg$time <- as.POSIXct(all_data_avg$time, format="%H:%M:%OS")
+    all_data_avg$day<-format(as.Date(all_data_avg$time_30min ,format="%Y-%m-%d"), "%d")
+    all_data_avg$minutes_after_midnight<-as.numeric(difftime(all_data_avg$time, as.POSIXct('00:00:00', format = '%H:%M:%S'), units = 'min'))
+    all_data_avg<-all_data_avg[complete.cases(all_data_avg),]
+    
+    ss_data<-all_data_avg[all_data_avg$minutes_after_midnight >= (suntimes_sub$ss_mins_after_midnight - 60) & all_data_avg$minutes_after_midnight <= (suntimes_sub$ss_mins_after_midnight + 60),]
+    
+    dusk_summary<-ss_data %>%
+    group_by(site,day) %>%
+    mutate(steepest_dusk_anth = max(diff(anthrop_30)), steepest_dusk_bio = max(diff(biotic_30)), auc_dusk_anthro = AUC(minutes_after_midnight, anthrop_30, method = "spline"),auc_dusk_bio = AUC(minutes_after_midnight, biotic_30, method = "spline"), dusk_auc_an_min_bio = auc_dusk_anthro - auc_dusk_bio, peak_dusk_anth = max(anthrop_30), peak_dusk_bio = max(biotic_30) )  %>%
+    select(site, day, steepest_dusk_anth, steepest_dusk_bio, auc_dusk_anthro, auc_dusk_bio, dusk_auc_an_min_bio, peak_dusk_anth, peak_dusk_bio)%>%
+    distinct()
+    
+    print(file)
+    return(dusk_summary)
+}
+
+dusk_out<-lapply(files, dusk_feature_extract)
+
+
+dusk_df<-bind_rows(dusk_out, .id = "column_label")
+
+write.csv(df, "dusk_example_feature_extraction.csv", row.names = FALSE)
+
+```
+
+
+```{r}
+
+df_dawn<-merge(df, dawn_df, by=c("site", "day"))
+
+df_all<-merge(df_dawn, dusk_df, by=c("site", "day"))
+
+df_all<-df_all[, -grep("column_label", colnames(df_all))]
+
+
+df_all$n_peaks_anth[is.na(df_all$n_peaks_anth)]<-0
+df_all$n_peaks_bio[is.na(df_all$n_peaks_bio)]<-0
+
+write.csv(df_all, "all_days_feature_extractions.csv")
+
+```
+
+
+```{r}
+
+test_pca<-prcomp(df_all[,c(3,4,7:13, 16:22,25:29)], center = TRUE,scale. = TRUE)
+
+summary(test_pca)
+
+library(devtools)
+
+devtools::install_github("vqv/ggbiplot")
+
+library(ggbiplot)
+
+ggbiplot(test_pca)
+
+```
+
+```{r}
+library(factoextra)
+
+fviz_pca_var(test_pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+```
+
+```{r}
+
+fviz_pca_biplot(test_pca, repel = TRUE,
+                col.var = "#2E9FDF", # Variables color
+                col.ind = "#696969"  # Individuals color
+                )
+```
+
+
 ```{r, echo = FALSE}
 
 
 df<-read.csv("example_feature_extraction.csv")
 
-knitr::kable(df)
+#knitr::kable(df)
 
 ```
 
