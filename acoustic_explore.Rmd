@@ -60,6 +60,8 @@ site_datetime<-function(site_name){
   df_sub$datetime<-time_seq_sub
   df_sub$site<-site_name
   
+  df_sub<-df_sub[complete.cases(df_sub),]
+  
   write.csv(df_sub, paste(getwd(), "/Data/Processed_data_c/",site_name, "_acoustic_datetime_check.csv", sep=""), row.names = FALSE)
   return(df_sub)
   
