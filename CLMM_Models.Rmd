@@ -1,0 +1,574 @@
+---
+title: "Models for urban acoustics"
+author: "Fiona Spooner"
+date: "4 September 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+Things that still need to be addressed
+
+* Invert auc_an_min_bio so that positive values mean a positive message!
+* Account for date/weather in the models some how. Have min/mean/max temp for the overall period but something more finescale could be useful, especially precipitation as this will affect noise. 
+* Should integrate all the preceding code into this file
+* Open/Garden data missing from some of the sites ~ 12 in the 100m versions
+
+```{r, eval = TRUE, message=FALSE, warning = FALSE}
+library(here)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(DescTools)
+library(knitr)
+library(dplyr)
+library(lubridate)
+library(pracma)
+library(ordinal)
+library(MASS)
+library(ppcor)
+library(lme4)
+library(bbmle)
+
+```
+
+```{r}
+xy<-read.csv(here::here("allSitesDetailsCoordinates.csv"))
+
+xy$SiteTypeRgp <- as.character(xy$Site_Type)
+xy$SiteTypeRgp[xy$Site_Type == "Allotment"] <- "Community Garden"
+xy$SiteTypeRgp[xy$Site_Type == "Green Wall" | xy$Site_Type == "Green Roof"] <- "Green Infrastructure"
+
+
+hab<-read.csv(here::here("allSitesHabitat.csv"))
+area<-read.csv(here::here("siteAreaAndPerimeter.csv"))
+temp<-read.csv(here::here("temperature.csv"))
+garden<-read.csv(here::here("garden100m.csv"))
+colnames(garden)[3]<-"Area_Garden"
+open<-read.csv(here::here("openSpace100m.csv"))
+colnames(open)[3]<-"Area_Open"
+
+lidar <- read.csv(here::here("100m_results.csv"))
+lidar_cell_area <- 8.105 * 8.105
+radius <- 100
+
+lidar$siteName <- gsub("_", "", lidar$siteName)
+lidar$grassProp <- (lidar$grassArea * lidar_cell_area)/(pi * radius^2)
+lidar$shrubProp <-  (lidar$shrubArea * lidar_cell_area)/(pi * radius^2)
+lidar$treeProp <-  (lidar$treeArea * lidar_cell_area)/(pi * radius^2)
+
+df<-readRDS("all_days_feature_extractions_2019_09_02.RDS")
+
+df<-df %>% 
+      dplyr::select(site, day, steepest_anth, steepest_bio, steepest_time_anth, steepest_time_bio, auc_anthro, auc_bio, n_peaks_anth, n_peaks_bio, auc_an_min_bio, peak_anth, peak_bio, peak_anth_time, peak_bio_time, steepest_dawn_anth, steepest_dawn_bio, auc_dawn_anthro, auc_dawn_bio, dawn_auc_an_min_bio, peak_dawn_anth, peak_dawn_bio, steepest_dusk_anth, steepest_dusk_bio, auc_dusk_anthro, auc_dusk_bio, dusk_auc_an_min_bio, peak_dusk_anth, peak_dusk_bio) %>% 
+    distinct()
+
+df_hab <- merge(df,hab, by.x = "site", by.y="Site" )
+df_hab <- merge(df_hab,area ,by.x = "site", by.y = "SiteCode")
+df_hab <- merge(df_hab, temp, by.x = "site", by.y = "Site")
+df_hab <- merge(df_hab, xy[,c("SiteCode", "SiteTypeRgp","StartDate", "EndDate")], by.x = "site", by.y = "SiteCode")
+df_hab <- merge(df_hab, open[,c(2,3)], by.x = "site", by.y = "SiteCode", all = TRUE)
+df_hab <- merge(df_hab, garden[,c(2,3)], by.x = "site", by.y = "SiteCode", all = TRUE)
+df_hab <- merge(df_hab, lidar, by.x = "site", by.y = "siteName", all = TRUE)
+
+df_hab$n_peaks_anth[is.na(df_hab$n_peaks_anth)]<-0
+df_hab$n_peaks_bio[is.na(df_hab$n_peaks_bio)]<-0
+
+df_hab$tempRange<-df_hab$maxTemp - df_hab$minTemp
+
+
+
+```
+
+
+Remove start day and end day as these are incomplete days
+```{r}
+
+df_hab$StartDate<-as.Date(df_hab$StartDate, format = "%d-%m-%y")
+df_hab$EndDate<-as.Date(df_hab$EndDate, format = "%d-%m-%y")
+
+df_hab<-df_hab %>% 
+          group_by(site) %>% 
+          filter(day != day(StartDate) & day != day(EndDate)) %>% 
+          ungroup()
+```
+
+
+```{r}
+
+ggplot(df_hab, aes(x = treeProp+shrubProp+grassProp, y = auc_bio, group = site,colour = as.factor(month(df_hab$EndDate))))+
+  geom_jitter(width = 0.2)
+```
+
+```{r}
+
+ggplot(df_hab, aes(x = treeArea, y = auc_anthro, group = site,colour = site))+
+  geom_jitter(width = 0.2)+ 
+  theme(legend.position = "none")
+
+```
+
+
+```{r}
+
+ggplot(df_hab, aes(x = treeArea + shrubArea , y = peak_bio, group = site,colour =  Site_Type))+
+  geom_jitter(width = 0.2)
+
+```
+
+```{r}
+
+ggplot(df_hab, aes(x =  shrubArea, y = auc_bio, group = site,colour = site))+
+  geom_jitter(width = 0.2)+ 
+  theme(legend.position = "none")
+
+```
+
+```{r}
+
+ggplot(df_hab, aes(x = grassArea, y = auc_bio, group = site,colour = site))+
+  geom_jitter(width = 0.2)+ 
+  theme(legend.position = "none")
+
+```
+
+```{r}
+
+ggplot(df_hab, aes(x = grassArea, y = auc_anthro, group = site,colour = site))+
+  geom_jitter(width = 0.2)+ 
+  theme(legend.position = "none")
+
+```
+
+
+```{r}
+
+ggplot(df_hab, aes(x = Complexity, y = auc_an_min_bio, group = site,colour = site))+
+  geom_jitter(width = 0.2)+ 
+  theme(legend.position = "none")
+
+```
+
+```{r}
+
+ggplot(df_hab, aes(x = siteDiversity, y = auc_bio, colour = Site_Type))+
+  geom_jitter(width = 0.2)+
+  theme(legend.position = "none")
+
+```
+```{r}
+ggplot(df_hab, aes(x = siteDiversity, y = auc_anthro, colour = Site_Type))+
+  geom_jitter(width = 0.2)+
+  theme(legend.position = "none")
+
+```
+
+
+```{r}
+
+ggplot(df_hab, aes(x = Area, y = auc_bio, colour = Site_Type))+
+  geom_jitter(width = 0.2)+
+  theme(legend.position = "none")
+
+```
+
+
+```{r}
+ggplot(df_hab, aes(x =Area_Open, y = auc_bio, colour = site))+
+  geom_jitter(width = 0.2)+
+  theme(legend.position = "none")
+
+```
+
+```{r}
+ggplot(df_hab, aes(x =Area_Garden, y = auc_bio, colour = site))+
+  geom_jitter(width = 0.2)+
+  theme(legend.position = "none")
+
+```
+
+```{r}
+ggplot(df_hab, aes(x =Area_Open+Area_Garden, y = auc_bio, col=  Site_Type))+
+  #geom_smooth()+
+  geom_jitter(width = 0.2)
+
+```
+
+```{r}
+ggplot(df_hab, aes(x =Area_Open+Area_Garden, y = peak_bio))+
+  geom_smooth()+
+  ylim(0,1)+
+  geom_jitter(width = 0.2)+
+  theme(legend.position = "none")
+
+```
+
+
+```{r}
+ggplot(df_hab, aes(x =Area_Open+Area_Garden, y = peak_anth))+
+  geom_smooth()+
+  ylim(0,1)+
+  geom_jitter(width = 0.2)+
+  theme(legend.position = "none")
+
+```
+
+```{r, eval = FALSE, echo = FALSE}
+
+
+# df_hab<-df_hab[complete.cases(df_hab),]
+# 
+# pcor(df_hab[,c(3,4,7:13,16:29)],method = "pearson")
+# 
+# cors<-pcor(df_hab[,c(7:10)],method = "pearson")
+# 
+# cors$p.value < 0.05
+# 
+# pcor(df_hab[,c(7:13,16:29)],method = "pearson")
+# 
+# 
+
+```
+
+
+```{r}
+
+plot(df_hab[,c(9:13,21,22,36,43)])
+
+# vars<-colnames(df_hab[,c(9:13,21,22,36,43)])   #better to name these
+# df_hab_sc<-scale(df_hab[,vars])
+
+
+df_hab_sel <- scale(df_hab %>% 
+  dplyr::select(auc_anthro:peak_bio, peak_dawn_anth, peak_dawn_bio))
+
+
+df_hab_sc<-data.frame(Complexity = df_hab$Complexity, siteDiversity = df_hab$siteDiversity, site = df_hab$site,day = df_hab$day,Area_Garden = df_hab$Area_Garden, Area_Open = df_hab$Area_Open,grassArea = df_hab$grassArea, shrubArea = df_hab$grassArea, treeArea = df_hab$treeArea, siteType = df_hab$Site_Type,month = month(df_hab$EndDate), SiteType = df_hab$SiteTypeRgp ,df_hab_sel)
+
+```
+
+
+
+Ordinal logistic regression
+
+```{r}
+
+df_hab_sc$Complexity<-ordered(as.factor(df_hab_sc$Complexity), levels = c("0","1", "2", "3", "4"))
+
+
+m1<-polr(Complexity ~ auc_an_min_bio + peak_bio + peak_anth, data  =  df_hab_sc)
+m2<-polr(Complexity ~ peak_bio + peak_anth, data  =  df_hab_sc)
+m3<-polr(Complexity ~ peak_bio, data  =  df_hab_sc)
+m4<-polr(Complexity ~ peak_anth, data  =  df_hab_sc)
+m5<-polr(Complexity ~ auc_an_min_bio, data  =  df_hab_sc)
+
+AIC(m1,m2,m3,m4,m5)
+
+```
+Cumulative link mixed models from the ordinal package
+```{r}
+
+df_hab_sc$site<-as.factor(df_hab_sc$site)
+df_hab_sc$meanTemp_f<-as.factor(df_hab_sc$meanTemp)
+
+glob_clm<-clmm(Complexity ~ n_peaks_anth + n_peaks_bio + auc_an_min_bio + peak_anth + peak_bio + peak_dawn_anth + peak_dawn_bio + (1|site), data = df_hab_sc)
+
+summary(glob_clm)
+```
+
+```{r}
+gc1<-update(glob_clm, ~ . -n_peaks_anth)
+gc2<-update(gc1, ~ . -n_peaks_bio)
+gc3<-update(gc2, ~ . -peak_anth)
+gc4<-update(gc3, ~ . -peak_dawn_anth)
+gc5<-update(gc4, ~ . -peak_dawn_bio)
+gc6<-update(gc5, ~ . -peak_bio)
+
+AIC(glob_clm, gc1, gc2, gc3, gc4, gc5, gc6)
+
+# 
+# summary(gc4)
+# summary(gc5)
+# summary(gc6)
+```
+
+```{r, eval = FALSE, echo = FALSE}
+
+df_hab_sc$site<-as.factor(df_hab_sc$site)
+
+glob_clm_temp<-clmm(Complexity ~ n_peaks_anth + n_peaks_bio + auc_an_min_bio + peak_anth + peak_bio + peak_dawn_anth + peak_dawn_bio + (1|tempRange), data = df_hab_sc)
+
+
+summary(glob_clm_temp)
+
+gct1<-update(glob_clm_temp, ~ . -n_peaks_anth)
+gct2<-update(gct1, ~ . -peak_dawn_anth)
+gct3<-update(gct2, ~ . -peak_bio)
+gct4<-update(gct3, ~ . -n_peaks_bio)
+gct5<-update(gct4, ~ . -peak_dawn_bio)
+gct6<-update(gct5, ~ . -peak_anth)
+
+AICtab(glob_clm_temp, gct1, gct2, gct3, gct4, gct5, gct6)
+
+summary(gct2)
+summary(gct6)
+#pcor(df_hab_sc[,c(5:13)], method = "pearson")
+
+
+```
+
+
+
+```{r, eval = FALSE,echo=FALSE}
+clm1<-clmm(Complexity~ auc_an_min_bio +(1|site) , data  =  df_hab_sc)
+clm2<-clmm(Complexity ~ peak_anth + peak_bio + (1|site), data = df_hab_sc)
+clm3<-clmm(Complexity ~ peak_bio + (1|site), data = df_hab_sc)
+clm4<-clmm(Complexity ~ peak_anth + (1|site), data = df_hab_sc)
+clm5<-clmm(Complexity ~ peak_anth + peak_bio + auc_an_min_bio + (1|site), data = df_hab_sc)
+
+
+AICtab(glob_clm, clm1, clm2, clm3, clm4, clm5)
+```
+
+
+
+```{r, echo = FALSE}
+# 
+# glm1<-glm(siteDiversity ~ auc_an_min_bio+peak_bio+peak_anth, data  =  df_hab, family = poisson)
+# glm2<-glm(siteDiversity ~ peak_bio+peak_anth, data  =  df_hab, family = poisson)
+# glm3<-glm(siteDiversity ~ peak_bio, data  =  df_hab, family = poisson)
+# glm4<-glm(siteDiversity ~ peak_anth, data  =  df_hab, family = poisson)
+# glm5<-glm(siteDiversity ~ auc_an_min_bio, data  =  df_hab, family = poisson)
+# 
+# AIC(glm1,glm2,glm3,glm4,glm5)
+
+```
+
+```{r}
+
+global<-glmer(siteDiversity ~ n_peaks_anth + n_peaks_bio + auc_an_min_bio + peak_anth + peak_bio + peak_dawn_anth + peak_dawn_bio + (1|site) , data = df_hab_sc, family = poisson)
+
+glmm1<-glmer(siteDiversity ~ auc_an_min_bio+peak_bio+peak_anth + (1|site), data  =  df_hab_sc, family = poisson)
+glmm2<-glmer(siteDiversity ~ peak_bio + peak_anth + (1|site), data  =  df_hab_sc, family = poisson)
+glmm3<-glmer(siteDiversity ~ peak_bio + (1|site), data  =  df_hab_sc, family = poisson)
+glmm4<-glmer(siteDiversity ~ peak_anth + (1|site), data  =  df_hab_sc, family = poisson)
+glmm5<-glmer(siteDiversity ~ auc_an_min_bio + (1|site), data  =  df_hab_sc, family = poisson)
+
+AIC(global, glmm1,glmm2,glmm3,glmm4,glmm5)
+
+
+
+```
+
+
+```{r}
+
+library(bbmle)
+
+#df_hab_sc<-scale(df_hab[,vars])
+
+df_hab_sc$siteDiversity <-as.numeric(df_hab_sc$siteDiversity )
+
+global<-glmer(siteDiversity  ~ n_peaks_anth + n_peaks_bio + auc_an_min_bio + peak_anth + peak_bio + peak_dawn_anth + peak_dawn_bio + (1|site), data = df_hab_sc, family = poisson)
+
+glmm1<-glmer(siteDiversity ~ auc_an_min_bio+peak_bio+peak_anth + (1|site), data  =  df_hab_sc, family = poisson)
+glmm2<-glmer(siteDiversity ~ peak_bio + peak_anth + (1|site), data  =  df_hab_sc, family = poisson)
+glmm3<-glmer(siteDiversity ~ peak_bio + (1|site), data  =  df_hab_sc, family = poisson)
+glmm4<-glmer(siteDiversity ~ peak_anth + (1|site), data  =  df_hab_sc, family = poisson)
+glmm5<-glmer(siteDiversity ~ auc_an_min_bio + (1|site), data  =  df_hab_sc, family = poisson)
+
+AICtab(global, glmm1,glmm2,glmm3,glmm4,glmm5)
+
+```
+```{r}
+
+global_glm<-glm(treeArea + shrubArea + grassArea  ~ auc_bio + auc_anthro + SiteType + as.factor(month),  data = df_hab_sc, family = poisson)
+
+
+global_glmer<-glmer(treeArea + shrubArea + grassArea  ~ auc_bio + auc_anthro + (1|SiteType) ,  data = df_hab_sc, family = poisson)
+
+global_glmer_peak<-glmer(treeArea + shrubArea + grassArea  ~ peak_bio + peak_anth + (1|SiteTypeRgp),  data = df_hab, family = poisson)
+
+
+AICtab(global_glmer, global_glmer_peak)
+
+```
+
+```{r,eval=FALSE, echo =  FALSE}
+
+df_hab_sc$siteDiversity <-as.numeric(df_hab_sc$siteDiversity )
+
+global_glm<-glm(siteDiversity  ~ auc_an_min_bio + peak_anth + peak_bio, data = df_hab_sc, family = poisson)
+
+glm1<-glm(siteDiversity ~ auc_an_min_bio+peak_bio+peak_anth, data  =  df_hab_sc, family = poisson)
+glm2<-glm(siteDiversity ~ peak_bio + peak_anth, data  =  df_hab_sc, family = poisson)
+glm3<-glm(siteDiversity ~ peak_bio, data  =  df_hab_sc, family = poisson)
+glm4<-glm(siteDiversity ~ peak_anth, data  =  df_hab_sc, family = poisson)
+glm5<-glm(siteDiversity ~ auc_an_min_bio, data  =  df_hab_sc, family = poisson)
+
+
+AICtab(global_glm, glm1,glm2,glm3,glm4,glm5)
+
+
+
+```
+
+```{r,eval=FALSE, echo =  FALSE}
+
+
+global_glm<-glm(treeArea + shrubArea + grassArea  ~ auc_bio + auc_anthro + peak_dawn_anth + peak_dawn_bio, data = df_hab_sc, family = poisson)
+
+glm1<-glm(treeArea + shrubArea + grassArea ~ auc_an_min_bio+peak_bio+peak_anth, data  =  df_hab_sc, family = poisson)
+glm2<-glm(treeArea + shrubArea + grassArea ~ peak_bio + peak_anth, data  =  df_hab_sc, family = poisson)
+glm3<-glm(treeArea + shrubArea + grassArea ~ peak_bio, data  =  df_hab_sc, family = poisson)
+glm4<-glm(treeArea + shrubArea + grassArea ~ peak_anth, data  =  df_hab_sc, family = poisson)
+glm5<-glm(treeArea + shrubArea + grassArea ~ auc_an_min_bio, data  =  df_hab_sc, family = poisson)
+
+
+AICtab(global_glm, glm1,glm2,glm3,glm4,glm5)
+
+
+
+```
+
+
+
+Area Garden
+
+
+Here we use the beta distribution as the response variable is a proportion - value between 0 and 1.  
+
+```{r}
+
+library(glmmTMB)
+library(betareg)
+library(glmmADMB)
+
+df_hab$Area_Garden_Prop<-df_hab$Area_Garden/(pi*(100^2))
+df_hab_sc$Area_Garden_Prop<-df_hab_sc$Area_Garden/(pi*(100^2))
+
+
+df_hab$Area_Open_Prop<-df_hab$Area_Open/(pi*(100^2))
+df_hab_sc$Area_Open_Prop<-df_hab_sc$Area_Open/(pi*(100^2))
+
+df_hab$Area_Open_Garden_Prop<-df_hab$Area_Open_Prop+ df_hab$Area_Garden_Prop
+df_hab_sc$Area_Open_Garden_Prop<-df_hab_sc$Area_Open_Prop+ df_hab_sc$Area_Garden_Prop
+
+global_garden_admb<-glmmadmb(Area_Open_Garden_Prop ~   meanTemp +auc_an_min_bio + (1|site),  data = df_hab_sc, family="beta", link = "logit")
+
+g1<-glmmadmb(Area_Open_Garden_Prop ~  auc_an_min_bio + (1|site),  data = df_hab_sc, family="beta")
+
+gnull<-glmmadmb(Area_Open_Garden_Prop ~  meanTemp + (1|site),  data = df_hab_sc, family="beta")
+
+AICtab(global_garden_admb, g1, gnull)
+
+
+exp(cbind(OR = coef(g1), confint(g1)))
+
+
+exp(cbind(OR = coef(global_garden_admb), confint(global_garden_admb)))
+
+
+```
+
+#global_garden_tmb<-glmmTMB(Area_Open_Garden_Prop ~   meanTemp + auc_an_min_bio  ,  data = df_hab_sc, family = list(family = "beta", link = "logit"))
+
+
+```{r}
+b1<-betareg(Area_Open_Garden_Prop ~ auc_an_min_bio +meanTemp, data = df_hab_sc, link = "logit")
+b2<-betareg(Area_Open_Garden_Prop ~ auc_an_min_bio , data = df_hab_sc, link = "logit")
+bnull<-betareg(Area_Open_Garden_Prop ~ meanTemp , data = df_hab_sc, link = "logit")
+
+
+AICtab(b1, b2, bnull)
+
+exp(cbind(OR = coef(b2), confint(b2)))
+
+
+
+ran_gg<-as.data.frame(ranef(global_garden_admb))
+
+ran_gg<-as.data.frame(ranef(g1))
+
+ran_gg$site<-row.names(ran_gg)
+
+ran_gg %>% 
+  arrange(X.Intercept.)
+
+df<-unique(merge(ran_gg, df_hab_sc[,c("site", "Area_Open_Garden_Prop")], by = "site"))
+
+
+
+plot(df$X.Intercept., df$Area_Open_Garden_Prop)
+
+
+# dotplot()
+# 
+# r.squaredGLMM(global_garden)
+
+```
+
+#Open and Garden together
+
+
+
+```{r}
+
+df_hab_sc$meanTemp_fac<-as.factor(df_hab_sc$meanTemp)
+
+global_garden_rt<-glmmadmb(Area_Garden_Prop ~   auc_an_min_bio +(1|meanTemp_fac) ,  data = df_hab_sc, family="beta")
+
+
+summary(global_garden_rt)
+
+```
+
+```{r}
+glmm1<-glmer(siteDiversity ~ auc_an_min_bio+peak_bio+peak_anth + (1|site), data  =  df_hab_sc, family = poisson)
+glmm2<-glmer(siteDiversity ~ peak_bio + peak_anth + (1|site)+ (1|meanTemp)+ (1|tempRange), data  =  df_hab_sc, family = poisson)
+glmm3<-glmer(siteDiversity ~ peak_bio + (1|site)+ (1|meanTemp)+ (1|tempRange), data  =  df_hab_sc, family = poisson)
+glmm4<-glmer(siteDiversity ~ peak_anth + (1|site)+ (1|meanTemp)+ (1|tempRange), data  =  df_hab_sc, family = poisson)
+glmm5<-glmer(siteDiversity ~ auc_an_min_bio + (1|site)+ (1|meanTemp)+ (1|tempRange), data  =  df_hab_sc, family = poisson)
+
+AIC(global, glmm1,glmm2,glmm3,glmm4,glmm5)
+
+```
+
+
+```{r}
+
+df_hab_sc %>% 
+  group_by(site) %>% 
+  summarise(mean_auc_diff = mean(auc_an_min_bio), mean_area_green = mean(Area_Open_Garden_Prop)) %>% 
+  ggplot(aes(x = mean_area_green, y = mean_auc_diff))+
+  geom_point()+
+  geom_smooth()
+
+
+
+sum_df_hab_sc<-df_hab_sc %>% 
+  group_by(site) %>% 
+  summarise(mean_auc_diff = mean(auc_an_min_bio), mean_area_green = mean(Area_Open_Garden_Prop))
+
+
+bmean<-betareg(sum_df_hab_sc$mean_area_green ~  sum_df_hab_sc$mean_auc_diff )
+
+
+summary(bmean)
+
+exp(cbind(OR = coef(bmean), confint(bmean)))
+
+
+
+```
+
+
+```{r}
+
+
+
+
+
+```
