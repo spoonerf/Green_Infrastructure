@@ -46,7 +46,7 @@ sites_f$end_datetime<-as.POSIXct(paste(sites_f$End_Date, sites_f$End_Time, sep =
 ```
 
 ```{r, eval = FALSE, message= FALSE}
-sr<-0.524  #one record every 0.524 seconds
+sr <- 0.524  #one record every 0.524 seconds
 
 
 site_datetime<-function(site_name){
