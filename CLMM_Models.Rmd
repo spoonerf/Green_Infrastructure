@@ -98,31 +98,32 @@ df_hab<-df_hab %>%
 
 ```{r}
 
-ggplot(df_hab, aes(x = treeProp+shrubProp+grassProp, y = auc_bio, group = site,colour = as.factor(month(df_hab$EndDate))))+
-  geom_jitter(width = 0.2)
+df_hab$month <- as.factor(month(df_hab$EndDate))
+df_hab$total_grn <- df_hab$treeProp + df_hab$shrubProp + df_hab$grassProp
+
+
+ggplot(df_hab, aes(x = total_grn, y = auc_bio, group = site,colour = month ))+
+  geom_point(width = 0.2)
 ```
 
 ```{r}
 
-ggplot(df_hab, aes(x = treeArea, y = auc_anthro, group = site,colour = site))+
-  geom_jitter(width = 0.2)+ 
-  theme(legend.position = "none")
+ggplot(df_hab, aes(x = total_grn, y = auc_anthro, group = site,colour = month))+
+  geom_point(width = 0.2)
 
 ```
 
 
 ```{r}
 
-ggplot(df_hab, aes(x = treeArea + shrubArea , y = peak_bio, group = site,colour =  Site_Type))+
-  geom_jitter(width = 0.2)
+ggplot(df_hab, aes(x = total_grn , y = peak_bio, group = site,colour =  month))+
+  geom_point()
 
 ```
-
 ```{r}
 
-ggplot(df_hab, aes(x =  shrubArea, y = auc_bio, group = site,colour = site))+
-  geom_jitter(width = 0.2)+ 
-  theme(legend.position = "none")
+ggplot(df_hab, aes(x = total_grn , y = peak_anth, group = site,colour =  month))+
+  geom_point()
 
 ```
 
